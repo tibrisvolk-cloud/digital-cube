@@ -13,7 +13,7 @@ from telegram.ext import (
 import sqlite3
 
 # ---------- НАСТРОЙКИ ----------
-TOKEN = os.getenv("BOT_TOKEN", "ВАШ_ТОКЕН_БОТА")  
+TOKEN = os.getenv("BOT_TOKEN", "ВАШ_ТОКЕН_БОТА")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 DB_NAME = "bot_data.db"
 # --------------------------------
@@ -1239,6 +1239,7 @@ def main():
     app.add_handler(CallbackQueryHandler(button_click, pattern="^verify_ext_"))
     app.add_handler(CallbackQueryHandler(button_click, pattern="^ext_start_"))
     app.add_handler(CallbackQueryHandler(button_click, pattern="^code_"))
+
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
     app.add_handler(CommandHandler("addriddle", addriddle_start))
@@ -1264,7 +1265,6 @@ def main():
     app.add_handler(CommandHandler("setpoints", set_points_command))
     app.add_handler(CommandHandler("earnings", earnings))
 
-    # Умный запуск: если есть переменная RENDER, то вебхук, иначе polling
     if os.getenv("RENDER"):
         PORT = int(os.getenv("PORT", 8443))
         app.run_webhook(
@@ -1272,6 +1272,7 @@ def main():
             port=PORT,
             webhook_url=f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME')}/webhook",
             drop_pending_updates=True,
+            health_endpoint="/health"
         )
     else:
         print("Бот запущен локально...")
