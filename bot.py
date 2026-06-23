@@ -168,7 +168,7 @@ def check_riddle_answer(user_id, riddle_id, user_answer):
         return "riddle_not_found"
     correct_answer, reward = row[0].strip().lower(), row[1]
 
-    # Проверка только общего лимита
+    # Проверка общего лимита
     c.execute("SELECT total_limit FROM riddles WHERE id = ?", (riddle_id,))
     total_limit = c.fetchone()[0]
     if total_limit is not None:
@@ -522,7 +522,7 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data.startswith("riddle_"):
         riddle_id = int(data.split("_")[1])
-        # Проверка блокировки попыток
+        # 🔒 Проверка попыток перед открытием загадки
         conn = get_connection()
         c = conn.cursor()
         c.execute("SELECT solved, attempts_count, first_attempt_time FROM user_riddle_attempts WHERE user_id = ? AND riddle_id = ?", (user_id, riddle_id))
@@ -534,7 +534,7 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 first_time = datetime.fromisoformat(first_time_str) if first_time_str else None
                 if first_time and (datetime.now() - first_time) < timedelta(hours=24):
                     keyboard = [[InlineKeyboardButton("🔙 К списку загадок", callback_data="riddles_menu")]]
-                    await query.message.reply_text("⏳ Попытки исчерпаны.", reply_markup=InlineKeyboardMarkup(keyboard))
+                    await query.message.reply_text("⏳ Попытки исчерпаны. Возвращайтесь через 24 часа.", reply_markup=InlineKeyboardMarkup(keyboard))
                     return
         conn = get_connection()
         c = conn.cursor()
@@ -672,6 +672,23 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if 'active_riddle' in context.user_data:
         riddle_id = context.user_data['active_riddle']
         reward = context.user_data.get('active_riddle_reward', 10)
+
+        # 🔒 Дополнительная проверка попыток прямо перед ответом
+        conn = get_connection()
+        c = conn.cursor()
+        c.execute("SELECT solved, attempts_count, first_attempt_time FROM user_riddle_attempts WHERE user_id = ? AND riddle_id = ?", (user.id, riddle_id))
+        att = c.fetchone()
+        conn.close()
+        if att:
+            solved, attempts, first_time_str = att
+            if not solved and attempts >= 3:
+                first_time = datetime.fromisoformat(first_time_str) if first_time_str else None
+                if first_time and (datetime.now() - first_time) < timedelta(hours=24):
+                    context.user_data.pop('active_riddle', None)
+                    context.user_data.pop('active_riddle_reward', None)
+                    await update.message.reply_text("⏳ Попытки исчерпаны. Возвращайтесь через 24 часа.")
+                    return
+
         result = check_riddle_answer(user.id, riddle_id, text)
 
         if result == "riddle_not_found":
@@ -712,7 +729,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await try_handle_riddle_step(update, context):
         return
-    # Если фото пришло не в процессе создания загадки, игнорируем
 
 async def try_handle_riddle_step(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
     user_id = update.effective_user.id
@@ -752,7 +768,6 @@ async def try_handle_riddle_step(update: Update, context: ContextTypes.DEFAULT_T
                 points = 10
             ud['riddle_points'] = points
             ud['awaiting_points'] = False
-            # Переходим сразу к фото
             ud['awaiting_image'] = True
             await update.message.reply_text("Отправьте фото для загадки (или напишите 'нет' / 'skip' для пропуска):")
             return True
@@ -769,7 +784,6 @@ async def try_handle_riddle_step(update: Update, context: ContextTypes.DEFAULT_T
             await update.message.reply_text("Отправьте фото или напишите 'нет' для пропуска.")
             return True
 
-        # Завершаем создание загадки
         text = ud.pop('riddle_text')
         answer = ud.pop('riddle_answer')
         points = ud.pop('riddle_points')
@@ -781,7 +795,7 @@ async def try_handle_riddle_step(update: Update, context: ContextTypes.DEFAULT_T
 
     return False
 
-# ---------- АДМИНСКИЕ КОМАНДЫ ----------
+# ---------- АДМИНСКИЕ КОМАНДЫ (полный набор) ----------
 async def addriddle_start(update, context):
     if update.effective_user.id != ADMIN_ID: return
     context.user_data['adding_riddle'] = True
