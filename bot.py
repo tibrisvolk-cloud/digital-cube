@@ -46,12 +46,10 @@ def init_db():
             answer TEXT NOT NULL,
             points_reward INTEGER DEFAULT 10,
             total_limit INTEGER,
-            user_limit INTEGER,
             image TEXT DEFAULT '',
             is_active INTEGER DEFAULT 1)""")
     try:
         c.execute("ALTER TABLE riddles ADD COLUMN total_limit INTEGER")
-        c.execute("ALTER TABLE riddles ADD COLUMN user_limit INTEGER")
         c.execute("ALTER TABLE riddles ADD COLUMN image TEXT DEFAULT ''")
     except:
         pass
@@ -72,11 +70,9 @@ def init_db():
             delay_seconds INTEGER DEFAULT 0,
             secret_code TEXT DEFAULT '',
             total_limit INTEGER,
-            user_limit INTEGER,
             is_active INTEGER DEFAULT 1)""")
     try:
         c.execute("ALTER TABLE subscriptions ADD COLUMN total_limit INTEGER")
-        c.execute("ALTER TABLE subscriptions ADD COLUMN user_limit INTEGER")
     except:
         pass
     c.execute("""CREATE TABLE IF NOT EXISTS user_subscriptions (
@@ -139,17 +135,16 @@ def get_active_riddles_for_user(user_id):
         WHERE r.is_active = 1
           AND NOT EXISTS (SELECT 1 FROM user_riddle_attempts u WHERE u.user_id = ? AND u.riddle_id = r.id AND u.solved = 1)
           AND (r.total_limit IS NULL OR (SELECT COUNT(*) FROM user_riddle_attempts WHERE riddle_id = r.id AND solved = 1) < r.total_limit)
-          AND (r.user_limit IS NULL OR (SELECT COUNT(*) FROM user_riddle_attempts WHERE user_id = ? AND riddle_id = r.id AND solved = 1) < r.user_limit)
-    """, (user_id, user_id))
+    """, (user_id,))
     riddles = c.fetchall()
     conn.close()
     return riddles
 
-def add_riddle(text, answer, points, total_limit=None, user_limit=None, image=''):
+def add_riddle(text, answer, points, total_limit=None, image=''):
     conn = get_connection()
     c = conn.cursor()
-    c.execute("INSERT INTO riddles (text, answer, points_reward, total_limit, user_limit, image) VALUES (?, ?, ?, ?, ?, ?)",
-              (text, answer.lower(), points, total_limit, user_limit, image))
+    c.execute("INSERT INTO riddles (text, answer, points_reward, total_limit, image) VALUES (?, ?, ?, ?, ?)",
+              (text, answer.lower(), points, total_limit, image))
     conn.commit()
     riddle_id = c.lastrowid
     conn.close()
@@ -173,20 +168,14 @@ def check_riddle_answer(user_id, riddle_id, user_answer):
         return "riddle_not_found"
     correct_answer, reward = row[0].strip().lower(), row[1]
 
-    c.execute("SELECT total_limit, user_limit FROM riddles WHERE id = ?", (riddle_id,))
-    limits = c.fetchone()
-    if limits:
-        total_limit, user_limit = limits
-        if total_limit is not None:
-            c.execute("SELECT COUNT(*) FROM user_riddle_attempts WHERE riddle_id = ? AND solved = 1", (riddle_id,))
-            if c.fetchone()[0] >= total_limit:
-                conn.close()
-                return "riddle_not_found"
-        if user_limit is not None:
-            c.execute("SELECT COUNT(*) FROM user_riddle_attempts WHERE user_id = ? AND riddle_id = ? AND solved = 1", (user_id, riddle_id))
-            if c.fetchone()[0] >= user_limit:
-                conn.close()
-                return "user_limit_reached"
+    # Проверка только общего лимита
+    c.execute("SELECT total_limit FROM riddles WHERE id = ?", (riddle_id,))
+    total_limit = c.fetchone()[0]
+    if total_limit is not None:
+        c.execute("SELECT COUNT(*) FROM user_riddle_attempts WHERE riddle_id = ? AND solved = 1", (riddle_id,))
+        if c.fetchone()[0] >= total_limit:
+            conn.close()
+            return "riddle_not_found"
 
     c.execute("""INSERT INTO user_riddle_attempts (user_id, riddle_id, first_attempt_time, attempts_count, solved)
                  VALUES (?, ?, ?, 1, 0)
@@ -239,17 +228,16 @@ def get_active_subscriptions_for_user(user_id):
                  WHERE s.is_active = 1
                    AND NOT EXISTS (SELECT 1 FROM user_subscriptions us WHERE us.user_id = ? AND us.subscription_id = s.id AND us.completed = 1)
                    AND (s.total_limit IS NULL OR (SELECT COUNT(*) FROM user_subscriptions WHERE subscription_id = s.id AND completed = 1) < s.total_limit)
-                   AND (s.user_limit IS NULL OR (SELECT COUNT(*) FROM user_subscriptions WHERE user_id = ? AND subscription_id = s.id AND completed = 1) < s.user_limit)
-              """, (user_id, user_id))
+              """, (user_id,))
     subs = c.fetchall()
     conn.close()
     return subs
 
-def add_subscription_generic(channel_username, description, points, task_type='subscription', delay=0, secret_code='', total_limit=None, user_limit=None):
+def add_subscription_generic(channel_username, description, points, task_type='subscription', delay=0, secret_code='', total_limit=None):
     conn = get_connection()
     c = conn.cursor()
-    c.execute("INSERT INTO subscriptions (channel_username, description, points_reward, task_type, delay_seconds, secret_code, total_limit, user_limit) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-              (channel_username, description, points, task_type, delay, secret_code, total_limit, user_limit))
+    c.execute("INSERT INTO subscriptions (channel_username, description, points_reward, task_type, delay_seconds, secret_code, total_limit) VALUES (?, ?, ?, ?, ?, ?, ?)",
+              (channel_username, description, points, task_type, delay, secret_code, total_limit))
     conn.commit()
     conn.close()
 
@@ -319,7 +307,8 @@ def purchase_item(user_id, item_id):
         c = conn.cursor()
         c.execute("SELECT name, price, total_limit, user_limit, content, manual_delivery FROM shop_items WHERE id = ? AND is_active = 1", (item_id,))
         row = c.fetchone()
-        if not row: return False, "Товар не найден.", None, None, None, None, None
+        if not row:
+            return False, "Товар не найден.", None, None, None, None, None
         name, price, total_limit, user_limit, content, manual = row
         c.execute("SELECT points FROM users WHERE user_id = ?", (user_id,))
         user_points = c.fetchone()
@@ -533,6 +522,7 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data.startswith("riddle_"):
         riddle_id = int(data.split("_")[1])
+        # Проверка блокировки попыток
         conn = get_connection()
         c = conn.cursor()
         c.execute("SELECT solved, attempts_count, first_attempt_time FROM user_riddle_attempts WHERE user_id = ? AND riddle_id = ?", (user_id, riddle_id))
@@ -688,10 +678,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data.pop('active_riddle', None)
             context.user_data.pop('active_riddle_reward', None)
             await update.message.reply_text("Загадка не активна или лимит исчерпан.")
-        elif result == "user_limit_reached":
-            context.user_data.pop('active_riddle', None)
-            context.user_data.pop('active_riddle_reward', None)
-            await update.message.reply_text("Вы уже выполнили эту загадку максимальное количество раз.")
         elif result == "already_solved":
             context.user_data.pop('active_riddle', None)
             context.user_data.pop('active_riddle_reward', None)
@@ -722,6 +708,12 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("Произошла ошибка.")
         return
 
+# ---------- ОБРАБОТЧИК ФОТО (для загадки) ----------
+async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await try_handle_riddle_step(update, context):
+        return
+    # Если фото пришло не в процессе создания загадки, игнорируем
+
 async def try_handle_riddle_step(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
     user_id = update.effective_user.id
     if user_id != ADMIN_ID:
@@ -729,64 +721,64 @@ async def try_handle_riddle_step(update: Update, context: ContextTypes.DEFAULT_T
 
     ud = context.user_data
     if ud.get('adding_riddle'):
-        ud['riddle_text'] = update.message.text
-        ud['adding_riddle'] = False
-        ud['awaiting_answer'] = True
-        await update.message.reply_text("Теперь введите правильный ответ (одно слово/фраза):")
-        return True
+        if update.message and update.message.text:
+            ud['riddle_text'] = update.message.text
+            ud['adding_riddle'] = False
+            ud['awaiting_answer'] = True
+            await update.message.reply_text("Теперь введите правильный ответ (одно слово/фраза):")
+            return True
+        else:
+            await update.message.reply_text("Пожалуйста, введите текст загадки (не фото).")
+            return True
+
     if ud.get('awaiting_answer'):
-        ud['riddle_answer'] = update.message.text
-        ud['awaiting_answer'] = False
-        ud['awaiting_points'] = True
-        await update.message.reply_text("Сколько баллов начислить за правильный ответ? (целое число, по умолчанию 10)")
-        return True
+        if update.message and update.message.text:
+            ud['riddle_answer'] = update.message.text.lower()
+            ud['awaiting_answer'] = False
+            ud['awaiting_points'] = True
+            await update.message.reply_text("Сколько баллов начислить за правильный ответ? (целое число, по умолчанию 10)")
+            return True
+        else:
+            await update.message.reply_text("Пожалуйста, введите ответ текстом.")
+            return True
+
     if ud.get('awaiting_points'):
-        try:
-            points = int(update.message.text)
-        except ValueError:
-            points = 10
-        if points < 1:
-            points = 10
-        ud['riddle_points'] = points
-        ud['awaiting_points'] = False
-        ud['awaiting_limits'] = True
-        await update.message.reply_text("Введите лимиты через пробел (total_limit user_limit) или '-' для пропуска:")
-        return True
-    if ud.get('awaiting_limits'):
-        limits = update.message.text.strip().split()
-        total_limit = None
-        user_limit = None
-        if len(limits) >= 1 and limits[0] != '-':
+        if update.message and update.message.text:
             try:
-                total_limit = int(limits[0])
-            except:
-                pass
-        if len(limits) >= 2 and limits[1] != '-':
-            try:
-                user_limit = int(limits[1])
-            except:
-                pass
-        ud['total_limit'] = total_limit
-        ud['user_limit'] = user_limit
-        ud['awaiting_limits'] = False
-        ud['awaiting_image'] = True
-        await update.message.reply_text("Отправьте фото для загадки (или напишите 'нет' / 'skip' для пропуска):")
-        return True
+                points = int(update.message.text)
+            except ValueError:
+                points = 10
+            if points < 1:
+                points = 10
+            ud['riddle_points'] = points
+            ud['awaiting_points'] = False
+            # Переходим сразу к фото
+            ud['awaiting_image'] = True
+            await update.message.reply_text("Отправьте фото для загадки (или напишите 'нет' / 'skip' для пропуска):")
+            return True
+        else:
+            await update.message.reply_text("Пожалуйста, введите число.")
+            return True
+
     if ud.get('awaiting_image'):
         if update.message.photo:
             ud['riddle_image'] = update.message.photo[-1].file_id
-        else:
+        elif update.message.text and update.message.text.lower() in ['нет', 'skip', '-']:
             ud['riddle_image'] = ''
-        ud['awaiting_image'] = False
+        else:
+            await update.message.reply_text("Отправьте фото или напишите 'нет' для пропуска.")
+            return True
+
+        # Завершаем создание загадки
         text = ud.pop('riddle_text')
         answer = ud.pop('riddle_answer')
         points = ud.pop('riddle_points')
-        total_limit = ud.pop('total_limit', None)
-        user_limit = ud.pop('user_limit', None)
         image = ud.pop('riddle_image', '')
-        riddle_id = add_riddle(text, answer, points, total_limit, user_limit, image)
+        ud.pop('awaiting_image', None)
+        riddle_id = add_riddle(text, answer, points, image=image)
         await update.message.reply_text(f"✅ Загадка #{riddle_id} добавлена (награда {points} бал.).")
         return True
+
     return False
 
 # ---------- АДМИНСКИЕ КОМАНДЫ ----------
@@ -808,17 +800,16 @@ async def listriddles(update, context):
     if update.effective_user.id != ADMIN_ID: return
     conn = get_connection()
     c = conn.cursor()
-    c.execute("SELECT id, text, points_reward, total_limit, user_limit FROM riddles WHERE is_active = 1")
+    c.execute("SELECT id, text, points_reward, total_limit FROM riddles WHERE is_active = 1")
     riddles = c.fetchall()
     conn.close()
     if not riddles:
         await update.message.reply_text("Нет активных загадок.")
         return
     lines = ["📃 Активные загадки:"]
-    for rid, text, reward, total_l, user_l in riddles:
+    for rid, text, reward, total_l in riddles:
         limits = ""
         if total_l is not None: limits += f" общ.лимит:{total_l}"
-        if user_l is not None: limits += f" лимит/чел:{user_l}"
         lines.append(f"#{rid} ({reward} бал.{limits}) – {text[:50]}...")
     await update.message.reply_text("\n".join(lines))
 
@@ -829,20 +820,16 @@ async def addsub(update, context):
         channel = args[0]
         points = int(args[1])
         total_limit = None
-        user_limit = None
         desc_start = 2
         for i, arg in enumerate(args[2:], start=2):
             if arg.startswith("total_limit="):
                 total_limit = int(arg.split("=")[1])
                 desc_start = i + 1
-            elif arg.startswith("user_limit="):
-                user_limit = int(arg.split("=")[1])
-                desc_start = i + 1
         desc = " ".join(args[desc_start:])
-        add_subscription_generic(channel, desc, points, task_type='subscription', total_limit=total_limit, user_limit=user_limit)
+        add_subscription_generic(channel, desc, points, task_type='subscription', total_limit=total_limit)
         await update.message.reply_text("Задание на подписку добавлено.")
     except:
-        await update.message.reply_text("Формат: /addsub @channel баллы [total_limit=N] [user_limit=M] описание")
+        await update.message.reply_text("Формат: /addsub @channel баллы [total_limit=N] описание")
 
 async def addext(update, context):
     if update.effective_user.id != ADMIN_ID: return
@@ -851,24 +838,20 @@ async def addext(update, context):
         url = args[0]
         points = int(args[1])
         total_limit = None
-        user_limit = None
         delay = 0
         desc_start = 2
         for i, arg in enumerate(args[2:], start=2):
             if arg.startswith("total_limit="):
                 total_limit = int(arg.split("=")[1])
                 desc_start = i + 1
-            elif arg.startswith("user_limit="):
-                user_limit = int(arg.split("=")[1])
-                desc_start = i + 1
             elif arg.startswith("delay="):
                 delay = int(arg.split("=")[1])
                 desc_start = i + 1
         desc = " ".join(args[desc_start:])
-        add_subscription_generic(url, desc, points, task_type='external', delay=delay, total_limit=total_limit, user_limit=user_limit)
+        add_subscription_generic(url, desc, points, task_type='external', delay=delay, total_limit=total_limit)
         await update.message.reply_text("Внешнее задание добавлено.")
     except:
-        await update.message.reply_text("Формат: /addext URL баллы [total_limit=N] [user_limit=M] [delay=сек] описание")
+        await update.message.reply_text("Формат: /addext URL баллы [total_limit=N] [delay=сек] описание")
 
 async def addcode(update, context):
     if update.effective_user.id != ADMIN_ID: return
@@ -878,20 +861,16 @@ async def addcode(update, context):
         points = int(args[1])
         code = args[2]
         total_limit = None
-        user_limit = None
         desc_start = 3
         for i, arg in enumerate(args[3:], start=3):
             if arg.startswith("total_limit="):
                 total_limit = int(arg.split("=")[1])
                 desc_start = i + 1
-            elif arg.startswith("user_limit="):
-                user_limit = int(arg.split("=")[1])
-                desc_start = i + 1
         desc = " ".join(args[desc_start:])
-        add_subscription_generic(url, desc, points, task_type='code', secret_code=code, total_limit=total_limit, user_limit=user_limit)
+        add_subscription_generic(url, desc, points, task_type='code', secret_code=code, total_limit=total_limit)
         await update.message.reply_text("Задание с кодом добавлено.")
     except:
-        await update.message.reply_text("Формат: /addcode URL баллы код [total_limit=N] [user_limit=M] описание")
+        await update.message.reply_text("Формат: /addcode URL баллы код [total_limit=N] описание")
 
 async def removesub(update, context):
     if update.effective_user.id != ADMIN_ID: return
@@ -906,7 +885,7 @@ async def listsubs(update, context):
     if update.effective_user.id != ADMIN_ID: return
     conn = get_connection()
     c = conn.cursor()
-    c.execute("SELECT id, channel_username, description, points_reward, task_type, delay_seconds, secret_code, total_limit, user_limit FROM subscriptions WHERE is_active = 1")
+    c.execute("SELECT id, channel_username, description, points_reward, task_type, delay_seconds, secret_code, total_limit FROM subscriptions WHERE is_active = 1")
     subs = c.fetchall()
     conn.close()
     if not subs:
@@ -914,10 +893,9 @@ async def listsubs(update, context):
         return
     lines = ["📌 Активные задания:"]
     for sub in subs:
-        sid, chan, desc, pts, ttype, delay, code, total_l, user_l = sub
+        sid, chan, desc, pts, ttype, delay, code, total_l = sub
         limits = ""
         if total_l is not None: limits += f" общ.лимит:{total_l}"
-        if user_l is not None: limits += f" лимит/чел:{user_l}"
         extra = f" тип:{ttype}"
         if ttype == 'external': extra += f" задержка:{delay}с"
         if ttype == 'code': extra += f" код:{code}"
@@ -1241,6 +1219,7 @@ def main():
     app.add_handler(CallbackQueryHandler(button_click, pattern="^code_"))
 
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
 
     app.add_handler(CommandHandler("addriddle", addriddle_start))
     app.add_handler(CommandHandler("removeriddle", removeriddle))
@@ -1265,17 +1244,8 @@ def main():
     app.add_handler(CommandHandler("setpoints", set_points_command))
     app.add_handler(CommandHandler("earnings", earnings))
 
-    if os.getenv("RENDER"):
-        PORT = int(os.getenv("PORT", 8443))
-        app.run_webhook(
-            listen="0.0.0.0",
-            port=PORT,
-            webhook_url=f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME')}/webhook",
-            drop_pending_updates=True
-        )
-    else:
-        print("Бот запущен локально...")
-        app.run_polling(allowed_updates=Update.ALL_TYPES)
+    print("Бот запущен...")
+    app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
     main()
