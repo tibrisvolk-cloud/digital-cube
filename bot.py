@@ -127,11 +127,10 @@ def get_user_points(user_id):
     conn.close()
     return row[0] if row else 0
 
-# ---------- ЗАГАДКИ (загадки с исчерпанными попытками остаются в списке) ----------
+# ---------- ЗАГАДКИ (видны даже с исчерпанными попытками) ----------
 def get_active_riddles_for_user(user_id):
     conn = get_connection()
     c = conn.cursor()
-    # Убрали условие, которое скрывало загадки с attempts >= 3
     c.execute("""SELECT r.id, r.text, r.image FROM riddles r
         WHERE r.is_active = 1
           AND NOT EXISTS (
@@ -234,7 +233,7 @@ def check_riddle_answer(user_id, riddle_id, user_answer):
     conn.close()
     return "correct"
 
-# ---------- ЗАДАНИЯ ----------
+# ---------- ЗАДАНИЯ (с упрощённым парсингом) ----------
 def get_active_subscriptions_for_user(user_id):
     conn = get_connection()
     c = conn.cursor()
@@ -584,19 +583,20 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for sub in subs:
             sub_id, channel, desc, reward, task_type, delay, secret_code = sub
             if task_type == 'subscription':
+                url = f"https://t.me/{channel.lstrip('@')}"   # <-- Вернули кнопку-ссылку
                 keyboard.append([
-                    InlineKeyboardButton(f"📢 {desc}", callback_data="None"),
+                    InlineKeyboardButton(f"🔗 Перейти: {channel}", url=url),
                     InlineKeyboardButton("✅ Проверить", callback_data=f"verify_sub_{sub_id}")
                 ])
             elif task_type == 'external':
                 keyboard.append([
-                    InlineKeyboardButton(f"🔗 {desc}", callback_data=f"ext_start_{sub_id}"),
+                    InlineKeyboardButton("🔗 Перейти", url=channel),
                     InlineKeyboardButton("✅ Проверить", callback_data=f"verify_ext_{sub_id}")
                 ])
             elif task_type == 'code':
                 keyboard.append([
-                    InlineKeyboardButton(f"🔑 {desc}", callback_data=f"code_{sub_id}"),
-                    InlineKeyboardButton("🔍 Ввести код", callback_data=f"code_{sub_id}")
+                    InlineKeyboardButton("🔗 Перейти", url=channel),
+                    InlineKeyboardButton("🔑 Ввести код", callback_data=f"code_{sub_id}")
                 ])
         keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="main_menu")])
         await query.message.reply_text("📌 Доступные задания:", reply_markup=InlineKeyboardMarkup(keyboard))
@@ -814,7 +814,7 @@ async def try_handle_riddle_step(update: Update, context: ContextTypes.DEFAULT_T
 
     return False
 
-# ---------- АДМИНСКИЕ КОМАНДЫ ----------
+# ---------- АДМИНСКИЕ КОМАНДЫ (упрощённый парсинг) ----------
 async def addriddle_start(update, context):
     if update.effective_user.id != ADMIN_ID: return
     context.user_data['adding_riddle'] = True
@@ -852,17 +852,17 @@ async def addsub(update, context):
         args = context.args
         channel = args[0]
         points = int(args[1])
+        # Попытка прочитать третий аргумент как total_limit, если он число
         total_limit = None
         desc_start = 2
-        for i, arg in enumerate(args[2:], start=2):
-            if arg.startswith("total_limit="):
-                total_limit = int(arg.split("=")[1])
-                desc_start = i + 1
+        if len(args) > 2 and args[2].isdigit():
+            total_limit = int(args[2])
+            desc_start = 3
         desc = " ".join(args[desc_start:])
         add_subscription_generic(channel, desc, points, task_type='subscription', total_limit=total_limit)
         await update.message.reply_text("Задание на подписку добавлено.")
     except:
-        await update.message.reply_text("Формат: /addsub @channel баллы [total_limit=N] описание")
+        await update.message.reply_text("Формат: /addsub @channel баллы [лимит] описание")
 
 async def addext(update, context):
     if update.effective_user.id != ADMIN_ID: return
@@ -873,18 +873,18 @@ async def addext(update, context):
         total_limit = None
         delay = 0
         desc_start = 2
-        for i, arg in enumerate(args[2:], start=2):
-            if arg.startswith("total_limit="):
-                total_limit = int(arg.split("=")[1])
-                desc_start = i + 1
-            elif arg.startswith("delay="):
-                delay = int(arg.split("=")[1])
-                desc_start = i + 1
+        # Попробуем прочитать следующие числа: общий лимит и задержку
+        if len(args) > 2 and args[2].isdigit():
+            total_limit = int(args[2])
+            desc_start = 3
+        if len(args) > 3 and args[3].isdigit():
+            delay = int(args[3])
+            desc_start = 4
         desc = " ".join(args[desc_start:])
         add_subscription_generic(url, desc, points, task_type='external', delay=delay, total_limit=total_limit)
         await update.message.reply_text("Внешнее задание добавлено.")
     except:
-        await update.message.reply_text("Формат: /addext URL баллы [total_limit=N] [delay=сек] описание")
+        await update.message.reply_text("Формат: /addext URL баллы [общ.лимит] [задержка_сек] описание")
 
 async def addcode(update, context):
     if update.effective_user.id != ADMIN_ID: return
@@ -895,15 +895,14 @@ async def addcode(update, context):
         code = args[2]
         total_limit = None
         desc_start = 3
-        for i, arg in enumerate(args[3:], start=3):
-            if arg.startswith("total_limit="):
-                total_limit = int(arg.split("=")[1])
-                desc_start = i + 1
+        if len(args) > 3 and args[3].isdigit():
+            total_limit = int(args[3])
+            desc_start = 4
         desc = " ".join(args[desc_start:])
         add_subscription_generic(url, desc, points, task_type='code', secret_code=code, total_limit=total_limit)
         await update.message.reply_text("Задание с кодом добавлено.")
     except:
-        await update.message.reply_text("Формат: /addcode URL баллы код [total_limit=N] описание")
+        await update.message.reply_text("Формат: /addcode URL баллы код [общ.лимит] описание")
 
 async def removesub(update, context):
     if update.effective_user.id != ADMIN_ID: return
