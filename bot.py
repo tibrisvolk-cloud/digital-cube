@@ -131,7 +131,6 @@ def get_user_points(user_id):
 def get_active_riddles_for_user(user_id):
     conn = get_connection()
     c = conn.cursor()
-    # Исключаем загадки, где у пользователя attempts >= 3 и 24 часа ещё не прошли
     c.execute("""SELECT r.id, r.text, r.image FROM riddles r
         WHERE r.is_active = 1
           AND NOT EXISTS (
@@ -189,15 +188,19 @@ def check_riddle_answer(user_id, riddle_id, user_answer):
             conn.close()
             return "riddle_not_found"
 
-    # Проверяем текущее состояние попыток ДО вставки
-    c.execute("SELECT attempts_count, first_attempt_time FROM user_riddle_attempts WHERE user_id = ? AND riddle_id = ?", (user_id, riddle_id))
+    # Проверяем текущее состояние попыток (ДО ИНКРЕМЕНТА)
+    c.execute("SELECT attempts_count, first_attempt_time, solved FROM user_riddle_attempts WHERE user_id = ? AND riddle_id = ?",
+              (user_id, riddle_id))
     current = c.fetchone()
     if current:
-        attempts_before, first_time_str = current
+        attempts_before, first_time_str, solved = current
+        if solved:
+            conn.close()
+            return "already_solved"
         if attempts_before >= 3:
             first_time = datetime.fromisoformat(first_time_str) if first_time_str else None
             if first_time and (now - first_time) > timedelta(hours=24):
-                # Сбрасываем, так как 24 часа прошло
+                # Сброс
                 c.execute("UPDATE user_riddle_attempts SET attempts_count = 1, first_attempt_time = ? WHERE user_id = ? AND riddle_id = ?",
                           (now, user_id, riddle_id))
                 conn.commit()
@@ -208,41 +211,27 @@ def check_riddle_answer(user_id, riddle_id, user_answer):
     else:
         attempts_before = 0
 
-    # Теперь выполняем INSERT/UPDATE с инкрементом
-    c.execute("""INSERT INTO user_riddle_attempts (user_id, riddle_id, first_attempt_time, attempts_count, solved)
-                 VALUES (?, ?, ?, 1, 0)
-                 ON CONFLICT(user_id, riddle_id) DO UPDATE SET
-                     first_attempt_time = COALESCE(first_attempt_time, ?),
-                     attempts_count = attempts_count + 1
-                 WHERE user_id = ? AND riddle_id = ?""",
-              (user_id, riddle_id, now, now, user_id, riddle_id))
-    c.execute("SELECT first_attempt_time, attempts_count, solved FROM user_riddle_attempts WHERE user_id = ? AND riddle_id = ?",
-              (user_id, riddle_id))
-    attempt_data = c.fetchone()
-    if not attempt_data:
-        conn.close()
-        return "error"
-    first_time_str, attempts, solved = attempt_data
-    first_time = datetime.fromisoformat(first_time_str) if first_time_str else None
-    if solved:
-        conn.close()
-        return "already_solved"
-    if first_time and (now - first_time) > timedelta(hours=24):
-        c.execute("UPDATE user_riddle_attempts SET first_attempt_time = ?, attempts_count = 1 WHERE user_id = ? AND riddle_id = ?",
-                  (now, user_id, riddle_id))
-        conn.commit()
-        attempts = 1
+    # Теперь инкрементируем попытки
+    if attempts_before == 0:
+        c.execute("INSERT INTO user_riddle_attempts (user_id, riddle_id, first_attempt_time, attempts_count, solved) VALUES (?, ?, ?, 1, 0)",
+                  (user_id, riddle_id, now))
     else:
-        if attempts > 3:
-            conn.close()
-            return "no_attempts"
+        c.execute("UPDATE user_riddle_attempts SET attempts_count = attempts_count + 1 WHERE user_id = ? AND riddle_id = ?",
+                  (user_id, riddle_id))
+    conn.commit()
+
+    # Снова читаем актуальное количество попыток
+    c.execute("SELECT attempts_count FROM user_riddle_attempts WHERE user_id = ? AND riddle_id = ?", (user_id, riddle_id))
+    new_attempts = c.fetchone()[0]
+
     if user_answer.strip().lower() != correct_answer:
-        if attempts >= 3:
+        if new_attempts >= 3:
             conn.close()
             return "no_attempts"
-        conn.commit()
         conn.close()
         return "wrong"
+
+    # Правильный ответ
     c.execute("UPDATE user_riddle_attempts SET solved = 1 WHERE user_id = ? AND riddle_id = ?",
               (user_id, riddle_id))
     c.execute("UPDATE users SET points = points + ? WHERE user_id = ?", (reward, user_id))
@@ -554,28 +543,20 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data.startswith("riddle_"):
         riddle_id = int(data.split("_")[1])
-        # 🔒 Проверка и сброс попыток при входе
+        # Проверка попыток перед открытием
         conn = get_connection()
         c = conn.cursor()
         c.execute("SELECT solved, attempts_count, first_attempt_time FROM user_riddle_attempts WHERE user_id = ? AND riddle_id = ?", (user_id, riddle_id))
         att = c.fetchone()
+        conn.close()
         if att:
             solved, attempts, first_time_str = att
             if not solved and attempts >= 3:
                 first_time = datetime.fromisoformat(first_time_str) if first_time_str else None
-                now = datetime.now()
-                if first_time and (now - first_time) > timedelta(hours=24):
-                    # Прошло больше 24 часов – сбрасываем попытки
-                    c.execute("UPDATE user_riddle_attempts SET first_attempt_time = ?, attempts_count = 0 WHERE user_id = ? AND riddle_id = ?",
-                              (now, user_id, riddle_id))
-                    conn.commit()
-                elif first_time and (now - first_time) < timedelta(hours=24):
-                    # Ещё не прошло 24 часа – блокируем
-                    conn.close()
+                if first_time and (datetime.now() - first_time) < timedelta(hours=24):
                     keyboard = [[InlineKeyboardButton("🔙 К списку загадок", callback_data="riddles_menu")]]
                     await query.message.reply_text("⏳ Попытки исчерпаны. Возвращайтесь через 24 часа.", reply_markup=InlineKeyboardMarkup(keyboard))
                     return
-        conn.close()
 
         conn = get_connection()
         c = conn.cursor()
@@ -714,7 +695,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         riddle_id = context.user_data['active_riddle']
         reward = context.user_data.get('active_riddle_reward', 10)
 
-        # 🔒 Дополнительная проверка попыток прямо перед ответом
+        # Дополнительная проверка попыток перед ответом
         conn = get_connection()
         c = conn.cursor()
         c.execute("SELECT solved, attempts_count, first_attempt_time FROM user_riddle_attempts WHERE user_id = ? AND riddle_id = ?", (user.id, riddle_id))
