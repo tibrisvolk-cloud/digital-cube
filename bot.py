@@ -127,26 +127,21 @@ def get_user_points(user_id):
     conn.close()
     return row[0] if row else 0
 
-# ---------- ЗАГАДКИ (исправлены) ----------
+# ---------- ЗАГАДКИ (загадки с исчерпанными попытками остаются в списке) ----------
 def get_active_riddles_for_user(user_id):
     conn = get_connection()
     c = conn.cursor()
+    # Убрали условие, которое скрывало загадки с attempts >= 3
     c.execute("""SELECT r.id, r.text, r.image FROM riddles r
         WHERE r.is_active = 1
           AND NOT EXISTS (
               SELECT 1 FROM user_riddle_attempts u
               WHERE u.user_id = ? AND u.riddle_id = r.id AND u.solved = 1
           )
-          AND NOT EXISTS (
-              SELECT 1 FROM user_riddle_attempts u
-              WHERE u.user_id = ? AND u.riddle_id = r.id
-                AND u.attempts_count >= 3
-                AND u.first_attempt_time > datetime('now', '-24 hours')
-          )
           AND (r.total_limit IS NULL OR (
               SELECT COUNT(*) FROM user_riddle_attempts WHERE riddle_id = r.id AND solved = 1
           ) < r.total_limit)
-    """, (user_id, user_id))
+    """, (user_id,))
     riddles = c.fetchall()
     conn.close()
     return riddles
