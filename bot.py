@@ -301,7 +301,7 @@ async def verify_single_subscription(bot, user_id, sub_id):
         c.execute("UPDATE users SET points = points + ? WHERE user_id = ?", (reward, user_id))
         conn.commit()
         conn.close()
-        return True, f"Задание выполнено! Начислено {reward} баллов.", reward
+        return True, f"Задание выполнено!\nНачислено {reward} баллов.", reward
     else:
         conn.close()
         return False, "Введите код после перехода по ссылке.", 0
@@ -486,11 +486,11 @@ async def inventory(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ---------- ГЛАВНОЕ МЕНЮ ----------
 async def send_main_menu(message, context):
-    caption = "🎮 Добро пожаловать!\nВыберите действие:"
+    caption = "🎮 \*Добро пожаловать в Digital Cube!\*\n \nРешайте загадки, выполняйте задания, чтобы получить очки, за которые можно купить реальные товары в магазине!\n \nПодпишитесь на @Cube_Quest, чтобы не упустить новые активности!"
     keyboard = [
         [InlineKeyboardButton("💰 Баланс", callback_data="balance")],
         [InlineKeyboardButton("🧩 Загадки", callback_data="riddles_menu")],
-        [InlineKeyboardButton("🔍 Проверка", callback_data="check_subscriptions")],
+        [InlineKeyboardButton("🔍 Задания", callback_data="check_subscriptions")],
         [InlineKeyboardButton("🏪 Магазин", callback_data="shop_menu")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -680,7 +680,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             c.execute("UPDATE users SET points = points + ? WHERE user_id = ?", (reward, user.id))
             conn.commit()
             conn.close()
-            await update.message.reply_text(f"✅ Код верен! Начислено {reward} баллов.")
+            await update.message.reply_text(f"✅ Код верный!\nНачислено {reward} баллов.")
         else:
             conn.close()
             await update.message.reply_text("❌ Неверный код.")
@@ -719,7 +719,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif result == "no_attempts":
             context.user_data.pop('active_riddle', None)
             context.user_data.pop('active_riddle_reward', None)
-            await update.message.reply_text("⏳ Исчерпаны попытки или лимит времени.")
+            await update.message.reply_text("⏳ Попытки исчерпаны. Возвращайтесь через 24 часа.")
         elif result == "wrong":
             conn = get_connection()
             c = conn.cursor()
@@ -735,7 +735,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif result == "correct":
             context.user_data.pop('active_riddle', None)
             context.user_data.pop('active_riddle_reward', None)
-            await update.message.reply_text(f"🎉 Правильно! Начислено {reward} баллов.")
+            await update.message.reply_text(f"🎉 Правильно!\nНачислено {reward} баллов.")
         else:
             context.user_data.pop('active_riddle', None)
             context.user_data.pop('active_riddle_reward', None)
@@ -1039,7 +1039,7 @@ async def deliver_command(update, context):
     name, item_content = item
     notification = f"✅ Ваш заказ «{name}» выдан!\n📦 {item_content}"
     if extra_msg:
-        notification += f"\n💌 Сообщение от администратора: {extra_msg}"
+        notification += f"\n💌 Сообщение от поддержки: {extra_msg}"
     try:
         await context.bot.send_message(user_id, notification)
     except Exception as e:
@@ -1175,7 +1175,7 @@ async def add_points_command(update, context):
     conn.commit()
     conn.close()
     msg = f"🔔 Вам начислено +{amount} баллов."
-    if reason: msg += f"\nПричина: {reason}"
+    if reason: msg += f"\n{reason}"
     try:
         await context.bot.send_message(chat_id=target_id, text=msg)
     except Exception as e:
@@ -1201,7 +1201,7 @@ async def remove_points_command(update, context):
     conn.commit()
     conn.close()
     msg = f"🔔 С вашего счёта снято {amount} баллов."
-    if reason: msg += f"\nПричина: {reason}"
+    if reason: msg += f"\n{reason}"
     try:
         await context.bot.send_message(chat_id=target_id, text=msg)
     except Exception as e:
