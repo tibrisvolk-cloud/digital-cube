@@ -496,7 +496,7 @@ async def send_main_menu(message, context):
     reply_markup = InlineKeyboardMarkup(keyboard)
     if os.path.isfile(MENU_IMAGE):
         with open(MENU_IMAGE, "rb") as photo:
-            await message.reply_photo(photo=photo, caption=caption, reply_markup=reply_markup)
+            await message.reply_photo(photo=photo, caption=caption, reply_markup=reply_markup, parse_mode="HTML")
     else:
         await message.reply_text(text=caption, parse_mode="HTML", reply_markup=reply_markup)
 
