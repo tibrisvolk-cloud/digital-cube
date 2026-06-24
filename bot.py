@@ -486,7 +486,7 @@ async def inventory(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ---------- ГЛАВНОЕ МЕНЮ ----------
 async def send_main_menu(message, context):
-    caption = "🎮 <b>Добро пожаловать в Digital Cube!</b>*\n \nРешайте загадки, выполняйте задания, чтобы получить очки, за которые можно купить реальные товары в магазине!\n \nПодпишитесь на @Cube_Quest, чтобы не упустить новые активности!"
+    caption = "🎮 <b>Добро пожаловать в Digital Cube!</b>\n \nРешайте загадки, выполняйте задания, чтобы получить очки, за которые можно купить реальные товары в магазине!\n \nПодпишитесь на @Cube_Quest, чтобы не упустить новые активности!"
     keyboard = [
         [InlineKeyboardButton("💰 Баланс", callback_data="balance")],
         [InlineKeyboardButton("🧩 Загадки", callback_data="riddles_menu")],
