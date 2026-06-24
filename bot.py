@@ -487,7 +487,6 @@ async def inventory(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ---------- ГЛАВНОЕ МЕНЮ ----------
 async def send_main_menu(message, context):
     caption = "🎮 <b>Добро пожаловать в Digital Cube!</b>*\n \nРешайте загадки, выполняйте задания, чтобы получить очки, за которые можно купить реальные товары в магазине!\n \nПодпишитесь на @Cube_Quest, чтобы не упустить новые активности!"
-    await message.reply_text(text=caption, parse_mode="HTML", reply_markup=reply_markup)
     keyboard = [
         [InlineKeyboardButton("💰 Баланс", callback_data="balance")],
         [InlineKeyboardButton("🧩 Загадки", callback_data="riddles_menu")],
@@ -499,7 +498,7 @@ async def send_main_menu(message, context):
         with open(MENU_IMAGE, "rb") as photo:
             await message.reply_photo(photo=photo, caption=caption, reply_markup=reply_markup)
     else:
-        await message.reply_text(text=caption, reply_markup=reply_markup)
+        await message.reply_text(text=caption, parse_mode="HTML", reply_markup=reply_markup)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
