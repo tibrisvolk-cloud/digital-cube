@@ -1239,6 +1239,9 @@ def main():
     init_db()
     app = Application.builder().token(TOKEN).build()
 
+    app.user_data_timeout = 30 * 60
+    app.chat_data_timeout = 30 * 60
+
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(button_click, pattern="^(?!shop_item_|buy_|shop_menu$|inventory$|verify_sub_|verify_ext_|ext_start_|code_).*$"))
     app.add_handler(CallbackQueryHandler(shop_menu, pattern="^shop_menu$"))
